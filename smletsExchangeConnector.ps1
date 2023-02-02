@@ -324,7 +324,7 @@ $scsmMGMTCreds = $null
 $exchangeAuthenticationType = "windows"
 $workflowEmailAddress = "$($smexcoSettingsMP.WorkflowEmailAddress)"
 $username = ""
-$password = ""
+$password = "" #Get-Secret -Name "SMExcoSecret" -AsPlainText
 $domain = ""
 $UseAutodiscover = $smexcoSettingsMP.UseAutoDiscover
 $ExchangeEndpoint = "$($smexcoSettingsMP.ExchangeAutodiscoverURL)"
@@ -1029,7 +1029,7 @@ function New-WorkItem ($message, $wiType, $returnWIBool)
 
     if ($loggingLevel -ge 4)
     {
-        $logMessage = "User Relationships for $title
+        $logMessage = "User Relationships for: $title 
         Affected User: $($affectedUser.DisplayName)
         Related Users: $($($relatedUsers.DisplayName) -join ',')"
         New-SMEXCOEvent -Source "New-WorkItem" -EventId 1 -LogMessage $logMessage -Severity "Information"
@@ -1046,6 +1046,7 @@ function New-WorkItem ($message, $wiType, $returnWIBool)
     # run the message through it to determine the Default Work Item type. Otherwise, use default if there is no match.
     if ($enableAzureCognitiveServicesForNewWI -eq $true)
     {
+        if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "Get-TemplatesByMailbox" -EventID 0 -Severity "Information" -LogMessage "Azure Cognitive Services For New WI is enabled. Getting Sentiment Score....."}
         $sentimentScore = Get-AzureEmailSentiment -messageToEvaluate $message.body
 
         #if the sentiment is greater than or equal to what is defined, create a Service Request.
@@ -1060,19 +1061,23 @@ function New-WorkItem ($message, $wiType, $returnWIBool)
     }
     elseif ($enableKeywordMatchForNewWI -eq $true -and $(Test-KeywordsFoundInMessage -message $message) -eq $true) {
         #Keyword override is true and keyword(s) found in message
+        if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "Get-TemplatesByMailbox" -EventID 0 -Severity "Information" -LogMessage "Keyword override is true and keyword(s) found in message"}
         $wiType = $workItemOverrideType
     }
     elseif ($UseMailboxRedirection -eq $true) {
         $wiType = if ($TemplatesForThisMessage) {$TemplatesForThisMessage["DefaultWiType"]} else {$defaultNewWorkItem}
     }
     elseif ($enableAzureMachineLearning -eq $true){
+        if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "Get-TemplatesByMailbox" -EventID 0 -Severity "Information" -LogMessage "Azure machine learning enabled. Attempting to determine WI type."}
         $amlProbability = Get-AMLWorkItemProbability -EmailSubject $title -EmailBody $description
         $wiType = if ($amlProbability.WorkItemTypeConfidence -ge $amlWorkItemTypeMinPercentConfidence) {$amlProbability.WorkItemType} else {$defaultNewWorkItem}
     }
     elseif ($wiType){
+        if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "Get-TemplatesByMailbox" -EventID 0 -Severity "Information" -LogMessage "WI type set to $witype"}
         $wiType = $wiType
     }
     else {
+        if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "Get-TemplatesByMailbox" -EventID 0 -Severity "Information" -LogMessage "No Wi type found. Using default."}
         $wiType = $defaultNewWorkItem
     }
 
@@ -1098,14 +1103,56 @@ function New-WorkItem ($message, $wiType, $returnWIBool)
                     Set-ScsmObject -SMObject $newWorkItem -PropertyHashtable @{"Description" = $description; "Displayname" = "$($newWorkItem.Id) - $title"} @scsmMGMTParams
                     if ($affectedUser)
                     {
-                        try {New-SCSMRelationshipObject -Relationship $createdByUserRelClass -Source $newWorkItem -Target $affectedUser -Bulk @scsmMGMTParams} catch {if ($loggingLevel -ge 2) {New-SMEXCOEvent -Source "New-WorkItem" -EventId 3 -LogMessage "The Created By User for $($newWorkItem.Name) could not be set." -Severity "Warning"}}
-                        try {New-SCSMRelationshipObject -Relationship $affectedUserRelClass -Source $newWorkItem -Target $affectedUser -Bulk @scsmMGMTParams} catch {if ($loggingLevel -ge 2) {New-SMEXCOEvent -Source "New-WorkItem" -EventId 4 -LogMessage "The Affected User for $($newWorkItem.Name) could not be set." -Severity "Warning"}}
+                        try
+						{
+							New-SCSMRelationshipObject -Relationship $createdByUserRelClass -Source $newWorkItem -Target $affectedUser -Bulk @scsmMGMTParams
+							if ($loggingLevel -ge 2) 
+							{
+								New-SMEXCOEvent -Source "New-WorkItem" -EventId 3 -LogMessage "The Created By User for $($newWorkItem.Name) is set to $($affecteduser.name)." -Severity "Information"
+							}
+						}
+						catch
+						{
+							if ($loggingLevel -ge 2) 
+							{
+								New-SMEXCOEvent -Source "New-WorkItem" -EventId 3 -LogMessage "The Created By User for $($newWorkItem.Name) could not be set." -Severity "Warning"
+							}
+						}
+                        try 
+						{
+							New-SCSMRelationshipObject -Relationship $affectedUserRelClass -Source $newWorkItem -Target $affectedUser -Bulk @scsmMGMTParams
+							if ($loggingLevel -ge 2) 
+							{
+								New-SMEXCOEvent -Source "New-WorkItem" -EventId 3 -LogMessage "The Affected By User for $($newWorkItem.Name) is set to $($affecteduser.name)." -Severity "Information"
+							}
+						} 
+						catch 
+						{
+							if ($loggingLevel -ge 2) 
+							{
+								New-SMEXCOEvent -Source "New-WorkItem" -EventId 4 -LogMessage "The Affected User for $($newWorkItem.Name) could not be set." -Severity "Warning"
+							}
+						}
                     }
                     if ($relatedUsers)
                     {
                         foreach ($relatedUser in $relatedUsers)
                         {
-                            New-SCSMRelationshipObject -Relationship $wiRelatesToCIRelClass -Source $newWorkItem -Target $relatedUser -Bulk @scsmMGMTParams
+                            try
+							{
+								New-SCSMRelationshipObject -Relationship $wiRelatesToCIRelClass -Source $newWorkItem -Target $relatedUser -Bulk @scsmMGMTParams
+								if ($loggingLevel -ge 2) 
+								{
+									New-SMEXCOEvent -Source "New-WorkItem" -EventId 3 -LogMessage "The Related User for $($newWorkItem.Name) is set to $($relatedUser.name)." -Severity "Information"
+								}
+							}
+							catch
+							{
+							if ($loggingLevel -ge 2) 
+							{
+								New-SMEXCOEvent -Source "New-WorkItem" -EventId 4 -LogMessage "The Related User for $($newWorkItem.Name) could not be set." -Severity "Warning"
+							}
+							}
                         }
                     }
 
@@ -1114,6 +1161,10 @@ function New-WorkItem ($message, $wiType, $returnWIBool)
                     #AdhocAdam Advanced Action Log Notifier won't engage on Comments Entered By -like "Azure Translate"
                     if ($enableAzureTranslateForNewWI -eq $true)
                     {
+						if ($loggingLevel -ge 2) 
+						{
+							New-SMEXCOEvent -Source "New-WorkItem" -EventId 3 -LogMessage "Azure Translate enabled. Attempting to translate email." -Severity "Information"
+						}
                         $descriptionSentence = $description.IndexOf(".")
                         $sampleDescription = $description.substring(0, $descriptionSentence)
                         if ($sampleDescription.Length -gt 1)
@@ -1143,29 +1194,94 @@ function New-WorkItem ($message, $wiType, $returnWIBool)
                             }
                         }
                     }
+					Else
+					{
+						if ($loggingLevel -ge 2) 
+						{
+							New-SMEXCOEvent -Source "New-WorkItem" -EventId 3 -LogMessage "Azure Translate disabled. Skipping....." -Severity "Information"
+						}
+					}
+
+                    if ($loggingLevel -ge 2) 
+					{
+						New-SMEXCOEvent -Source "New-WorkItem" -EventId 3 -LogMessage "Attempting to set Urgency and impact. Need to check if ACS Sentiment Analysis is enabled....." -Severity "Information"
+					}
+
+
 
                     #Set Urgency/Impact from ACS Sentiment Analysis. If it was previously defined use it, otherwise make the ACS call
                     if (($enableAzureCognitiveServicesForNewWI -eq $true) -and ($enableAzureCognitiveServicesPriorityScoring -eq $true))
                     {
+						if ($loggingLevel -ge 2) 
+						{
+							New-SMEXCOEvent -Source "New-WorkItem" -EventId 3 -LogMessage "Azure Cognitive Services for new WI and Priority Scoring are both enabled." -Severity "Information"
+						}
                         $priorityEnumArray = Get-ACSWorkItemPriority -score $sentimentScore -wiClass "System.WorkItem.Incident"
-                        try {Set-SCSMObject -SMObject $newWorkItem -PropertyHashtable @{"Impact" = $priorityEnumArray[0]; "Urgency" = $priorityEnumArray[1]} @scsmMGMTParams} catch {if ($loggingLevel -ge 2) {New-SMEXCOEvent -Source "Get-ACSWorkItemPriority" -EventID 2 -Severity "Warning" -LogMessage $_.Exception}}
+                        try 
+						{
+							Set-SCSMObject -SMObject $newWorkItem -PropertyHashtable @{"Impact" = $priorityEnumArray[0]; "Urgency" = $priorityEnumArray[1]} @scsmMGMTParams
+							if ($loggingLevel -ge 2) 
+							{
+								New-SMEXCOEvent -Source "New-WorkItem" -EventId 3 -LogMessage "Azure Cognitive Services Priority Scoring set Impact to $($priorityEnumArray[0]) and Urgency to $($priorityEnumArray[1])." -Severity "Information"
+							}
+						} 
+						catch 
+						{
+							if ($loggingLevel -ge 2) 
+							{
+								New-SMEXCOEvent -Source "Get-ACSWorkItemPriority" -EventID 2 -Severity "Warning" -LogMessage $_.Exception
+							}
+						}
                     }
                     elseif (($enableAzureCognitiveServicesForNewWI -eq $false) -and ($enableAzureCognitiveServicesPriorityScoring -eq $true))
                     {
+                        if ($loggingLevel -ge 2) 
+						{
+							New-SMEXCOEvent -Source "New-WorkItem" -EventId 3 -LogMessage "Azure Cognitive Services Priority Scoring is enabled. Azure Cognitive Services for new WI is disabled." -Severity "Information"
+						}
                         $sentimentScore = Get-AzureEmailSentiment -messageToEvaluate $newWorkItem.description
                         $priorityEnumArray = Get-ACSWorkItemPriority -score $sentimentScore -wiClass "System.WorkItem.Incident"
                         try {Set-SCSMObject -SMObject $newWorkItem -PropertyHashtable @{"Impact" = $priorityEnumArray[0]; "Urgency" = $priorityEnumArray[1]} @scsmMGMTParams} catch {if ($loggingLevel -ge 2) {New-SMEXCOEvent -Source "Get-ACSWorkItemPriority" -EventID 2 -Severity "Warning" -LogMessage $_.Exception}}
+                    }
+                    else
+                    {
+                        if ($loggingLevel -ge 2) 
+						{
+							New-SMEXCOEvent -Source "New-WorkItem" -EventId 3 -LogMessage "Azure Cognitive Services for new WI and Priority Scoring are both disabled. Skipping....." -Severity "Information"
+						}
                     }
 
                     #write the sentiment score into the custom Work Item extension
                     if ($acsSentimentScoreIRClassExtensionName)
                     {
-                        try {Set-SCSMObject -SMObject $newWorkItem -Property $acsSentimentScoreIRClassExtensionName -value $sentimentScore @scsmMGMTParams} catch {if ($loggingLevel -ge 2) {New-SMEXCOEvent -Source "Get-ACSWorkItemPriority" -EventID 3 -Severity "Warning" -LogMessage $_.Exception}}
+                        try 
+                        {
+                            Set-SCSMObject -SMObject $newWorkItem -Property $acsSentimentScoreIRClassExtensionName -value $sentimentScore @scsmMGMTParams
+                            if ($loggingLevel -ge 2) 
+                            {
+                                New-SMEXCOEvent -Source "Get-ACSWorkItemPriority" -EventID 3 -Severity "Information" -LogMessage "Work Item ACS Sentiment score set to $sentimentScore"
+                            }
+                        } 
+                        catch 
+                        {
+                            if ($loggingLevel -ge 2) 
+                            {
+                                New-SMEXCOEvent -Source "Get-ACSWorkItemPriority" -EventID 3 -Severity "Warning" -LogMessage $_.Exception
+                            }
+                        }
+                    }
+                    Else
+                    {
+                        if ($loggingLevel -ge 2) 
+                        {
+                            New-SMEXCOEvent -Source "Get-ACSWorkItemPriority" -EventID 3 -Severity "Information" -LogMessage "Work Item ACS Sentiment score is disabled. Skipping....."
+                        }
                     }
 
                     #update the Support Group and Classification if Azure Machine Learning is being used
                     if ($enableAzureMachineLearning -eq $true)
                     {
+                        if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "Get-AMLWorkItemProbability" -EventID 0 -Severity "Information" -LogMessage "Azure Machine Learning enabled. Determining support group....."}
                         #write confidence scores and enum predictions into Work Item
                         if ($amlWITypeIncidentStringClassExtensionName) {try{Set-SCSMObject -SMObject $newWorkItem -PropertyHashtable @{"$amlWITypeIncidentStringClassExtensionName" = $amlProbability.WorkItemType} @scsmMGMTParams} catch {if ($loggingLevel -ge 3) {New-SMEXCOEvent -Source "Get-AMLWorkItemProbability" -EventID 2 -Severity "Error" -LogMessage $_.Exception}}}
                         if ($amlWITypeIncidentScoreClassExtensionName) {try{Set-SCSMObject -SMObject $newWorkItem -PropertyHashtable @{"$amlWITypeIncidentScoreClassExtensionName" = $amlProbability.WorkItemTypeConfidence} @scsmMGMTParams} catch {if ($loggingLevel -ge 3) {New-SMEXCOEvent -Source "Get-AMLWorkItemProbability" -EventID 3 -Severity "Error" -LogMessage $_.Exception}}}
@@ -1198,6 +1314,10 @@ function New-WorkItem ($message, $wiType, $returnWIBool)
                             }
                         }
                     }
+                    Else
+                    {
+                        if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "Get-AMLWorkItemProbability" -EventID 0 -Severity "Information" -LogMessage "Azure Machine Learning disabled. Skipping....."}
+                    }
 
                     #Assign to an Analyst based on the Support Group that was set via Azure Machine Learning or just from the Template
                     if (($DynamicWorkItemAssignment) -and ($enableAzureMachineLearning -eq $true))
@@ -1216,9 +1336,26 @@ function New-WorkItem ($message, $wiType, $returnWIBool)
                             if ($loggingLevel -ge 2) {New-SMEXCOEvent -Source "Set-AssignedToPerSupportGroup" -EventID 3 -Severity "Warning" -LogMessage "The Assigned To User could not be set on $($newWorkItem.Name). Using Template: $($IRTemplate.DisplayName). This Template either does not have a Support Group defined that corresponds to a mapped Cireson Portal Group Mapping OR the Template being used/was copied from an OOB SCSM Template"}
                         }
                     }
+                    Else
+                    {
+                        if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "Get-AMLWorkItemProbability" -EventID 0 -Severity "Information" -LogMessage "Dynamic Work Item Assignment disabled. Skipping....."}
+                    }
+
+                    if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "General" -EventID 0 -Severity "Information" -LogMessage "Is affected user new? $($affectedUser.IsNew)."}
+
 
                     #### Determine auto-response logic for Knowledge Base and/or Request Offering Search. Verify User exists in SCSM (IsNew = $false) vs. created in memory for this run (IsNew = $true) ####
-                    if ($affectedUser.IsNew -eq $false) {$ciresonSuggestionURLs = Get-CiresonSuggestionURL -SuggestKA:$searchCiresonHTMLKB -AzureKA:$enableAzureCognitiveServicesForKA -SuggestRO:$searchAvailableCiresonPortalOfferings -AzureRO:$enableAzureCognitiveServicesForRO -WorkItem $newWorkItem -AffectedUser $affectedUser}
+                    if ($affectedUser.IsNew -eq $false) 
+                    {
+                        if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "General" -EventID 0 -Severity "Information" -LogMessage "Affected user an existing user. Searching for KB articles....."}
+                        $ciresonSuggestionURLs = Get-CiresonSuggestionURL -SuggestKA:$searchCiresonHTMLKB -AzureKA:$enableAzureCognitiveServicesForKA -SuggestRO:$searchAvailableCiresonPortalOfferings -AzureRO:$enableAzureCognitiveServicesForRO -WorkItem $newWorkItem -AffectedUser $affectedUser
+                    }
+                    else
+                    {
+                        if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "General" -EventID 0 -Severity "Information" -LogMessage "Affected user is not new. KB article search is disabled until the user has been created as a User Configuration Item"}
+                    }
+
+
                     if ($null -ne $ciresonSuggestionURLs)
                     {
                         if ($ciresonSuggestionURLs[0] -and $ciresonSuggestionURLs[1])
@@ -1234,9 +1371,20 @@ function New-WorkItem ($message, $wiType, $returnWIBool)
                             Send-CiresonSuggestionEmail -KnowledgeBaseURLs $ciresonSuggestionURLs[0] -Workitem $newWorkItem -AffectedUserEmailAddress $from
                         }
                     }
+                    else
+                    {
+                    	if ($loggingLevel -ge 2) {New-SMEXCOEvent -Source "New-WorkItem" -EventId 4 -LogMessage "No KB Artilces found." -Severity "Information"}
+                    }
 
                     # Custom Event Handler
-                    if ($ceScripts) { Invoke-AfterCreateIR }
+                    if ($ceScripts) { 
+                        if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "New-Workitem" -EventID 0 -Severity "Information" -LogMessage "Invoking AfterCreateIR processes......"}
+                        Invoke-AfterCreateIR 
+                    }
+                    else
+                    {
+                        if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "New-Workitem" -EventID 0 -Severity "Information" -LogMessage "No AfterCreateIR processes found. Skipping....."}
+                    }
 
                 }
         "sr" {
@@ -1538,8 +1686,15 @@ function Update-WorkItem ($message, $wiType, $workItem)
 
     #determine who left the comment
     $commentLeftBy = Get-SCSMUserByEmailAddress -EmailAddress "$($message.From)"
-    if ($commentLeftBy) {<#no change required#>}
-    elseif ((!$commentLeftBy) -and ($createUsersNotInCMDB -eq $true) ){$commentLeftBy = New-CMDBUser -UserEmail $message.From}
+    if ($commentLeftBy) 
+	{
+		if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "Update-WorkItem" -EventId 1 -LogMessage "Comment has been left by $commentLeftBy" -Severity "Information"}
+	}
+    elseif ((!$commentLeftBy) -and ($createUsersNotInCMDB -eq $true) )
+        {
+            $commentLeftBy = New-CMDBUser -UserEmail $message.From
+            if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "Update-WorkItem" -EventId 1 -LogMessage "Comment sent from $commentLeftBy" -Severity "Information"}
+        }
     else {$commentLeftBy = New-CMDBUser -UserEmail $message.From -NoCommit}
 
     #add any attachments
@@ -3021,6 +3176,7 @@ function Get-CiresonSuggestionURL
     #if Suggestions are both false, just exit this function call
     if (($SuggestKA -eq $false) -and ($SuggestRO -eq $false))
     {
+        if ($loggingLevel -ge 4){New-SMEXCOEvent -Source "General" -EventID 0 -Severity "Information" -LogMessage "Suggested KB articles are disabled. If you wish to enable this feature check the Cireson Integration section of the settings."}
         return $null
     }
 
@@ -4397,13 +4553,16 @@ $exchangeService = New-Object Microsoft.Exchange.WebServices.Data.ExchangeServic
 #figure out if the workflow should be used
 if ($scsmLFXConfigMP.GetRules() | Where-Object {($_.Name -eq "SMLets.Exchange.Connector.15d8b765a2f8b63ead14472f9b3c12f0")} | Select-Object Enabled -ExpandProperty Enabled)
 {
+    if ($loggingLevel -ge 4){
+        New-SMEXCOEvent -Source "General" -EventID 7 -LogMessage "SMEXCO is running as a workflow." -Severity "Information"
+    }
     #the workflow exists and it is enabled, determine how to connect to Exchange
     if ($UseExchangeOnline)
     {
         #validate the Run As Account format to ensure it is an email address
         if (!(($ewsUsername + "@" + $ewsDomain) -match "^([0-9a-zA-Z]([-.\w]*[0-9a-zA-Z])*@([0-9a-zA-Z][-\w]*[0-9a-zA-Z]\.)+[a-zA-Z]{2,9})$"))
         {
-            New-SMEXCOEvent -Source "General" -EventId 4 -LogMessage "The address/SCSM Run As Account used to sign into 365 is not a valid email address and is currently entered as $($ewsUsername + "@" + $ewsDomain). This will prevent a successful connection. To fix this, go to the Run As account in SCSM and for the username enter it as an email address like user@domain.tld" -Severity "Error"
+            New-SMEXCOEvent -Source "General" -EventId 4 -LogMessage "The address/SCSM Run As Account used to sign into 365 is not a valid email address and is currently entered as $($ewsUsername + '@' + $ewsDomain). This will prevent a successful connection. To fix this, go to the Run As account in SCSM and for the username enter it as an email address like user@domain.tld" -Severity "Error"
         }
         #request an access token from Azure
         $ReqTokenBody = @{
@@ -4453,13 +4612,20 @@ if ($scsmLFXConfigMP.GetRules() | Where-Object {($_.Name -eq "SMLets.Exchange.Co
 }
 else
 {
+    if ($loggingLevel -ge 4){
+        New-SMEXCOEvent -Source "General" -EventID 7 -LogMessage "SMEXCO is NOT running as a workflow. Need to determine how to connect" -Severity "Information"
+    }
     #the workflow either doesn't exist or it's not enabled, determine how to connect to Exchange
     if ($UseExchangeOnline)
     {
+    if ($loggingLevel -ge 4){
+        New-SMEXCOEvent -Source "General" -EventID 7 -LogMessage "SMEXCO is configured to run exchange online. EWSUseranme is $Username and the domain is $Domain" -Severity "Information"
+    }
+
         #validate the Run As Account format to ensure it is an email address
         if (!(($username + "@" + $domain) -match "^([0-9a-zA-Z]([-.\w]*[0-9a-zA-Z])*@([0-9a-zA-Z][-\w]*[0-9a-zA-Z]\.)+[a-zA-Z]{2,9})$"))
         {
-            New-SMEXCOEvent -Source "General" -EventId 4 -LogMessage "The address/SCSM Run As Account used to sign into 365 is not a valid email address and is currently entered as $($username + "@" + $password). This will prevent a successful connection. To fix this, go to the Run As account in SCSM and for the username enter it as an email address like user@domain.tld" -Severity "Error"
+            New-SMEXCOEvent -Source "General" -EventId 4 -LogMessage "The address/SCSM Run As Account used to sign into 365 is not a valid email address and is currently entered as $($username + "@" + $domain). This will prevent a successful connection. To fix this, go to the Run As account in SCSM and for the username enter it as an email address like user@domain.tld" -Severity "Error"
         }
         #request an access token from Azure
         $ReqTokenBody = @{
@@ -4653,12 +4819,14 @@ foreach ($message in $inbox)
             default {
                 if (($smexcoSettingsCustomRules.CustomRuleMessageClassEnum.DisplayName -contains "IPM.Note") -and ($UseCustomRules -eq $true))
                 {
+                    if (($loggingLevel -ge 1)){New-SMEXCOEvent -Source "General" -EventId 2 -LogMessage "$($smexcoSettingsCustomRules.CustomRuleMessageClassEnum.DisplayName) contains IPM.Note" -Severity "Information";}
                     #Custom Patterns has at least one defined use of IPM.Note, and Custom Rules are enabled
                     Test-EmailPattern -MessageClass $message.ItemClass -Email $email
                 }
                 else
                 {
                     #No core SCSM Work Item was matched, Custom Rules may not have been used/have matched, create a New Work Item
+                    if (($loggingLevel -ge 1)){New-SMEXCOEvent -Source "General" -EventId 2 -LogMessage "No core SCSM Work Item was matched, Custom Rules may not have been used/have matched, create a New Work Item." -Severity "Information";}
                     New-WorkItem $email $defaultNewWorkItem
                 }
             }
@@ -4667,6 +4835,7 @@ foreach ($message in $inbox)
         # Custom Event Handler
         if ($ceScripts) { Invoke-AfterProcessEmail }
 
+        if (($loggingLevel -ge 1)){New-SMEXCOEvent -Source "General" -EventId 2 -LogMessage "Marking the message as read on Exchange, and moving to deleted items" -Severity "Information";}
         #mark the message as read on Exchange, move to deleted items
         $message.IsRead = $true
         $message.Update([Microsoft.Exchange.WebServices.Data.ConflictResolutionMode]::AutoResolve) | Out-Null
